@@ -74,3 +74,6 @@ example.passive.onProgress((results) => {
   return Promise.map(results, result => updateItemInData(result.id, {tasty: true}))
   .tap(() => console.log('\nUpdated Data:\n', sampleData));
 }, {batchSize: 3});
+
+example.passive.onComplete()
+.then(() => console.log('I completed.'));

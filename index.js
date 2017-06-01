@@ -26,6 +26,9 @@ class Passive {
     if (config.seed) config.seed.forEach(seed => push(this, seed));
 
 
+    p(this).autoComplete = config.autoComplete !== false;
+
+
     p(this).concurrency = config.concurrency || 1;
 
     p(this).progressHandlers = [];
@@ -92,8 +95,14 @@ class Passive {
     // Do nothing if already resolving at concurrency limit.
     if (p(this).state.resolvingCount >= p(this).concurrency) return;
     if (p(this).state.handlingProgressCount) return;
-    // Do nothing if there is nothing in the queue.
-    if (!p(this).queue.length) return;
+    if (p(this).state.handlingErrorCount) return;
+
+    
+    if (!p(this).queue.length) {
+      if (p(this).autoComplete && !p(this).state.resolvingCount) complete(this);
+      // Do nothing if there is nothing in the queue.
+      return;
+    }
 
 
     resolveNext(this);
