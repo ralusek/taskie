@@ -75,5 +75,6 @@ example.passive.onProgress((results) => {
   .tap(() => console.log('\nUpdated Data:\n', sampleData));
 }, {batchSize: 3});
 
+
 example.passive.onComplete()
 .then(() => console.log('I completed.'));
