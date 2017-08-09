@@ -139,6 +139,11 @@ class Passive {
  *
  */
 class Active extends Passive {
+  constructor(config) {
+    super(config);
+    this.start();
+  }
+
   push(payload) {
     return push(this, payload);
   }
@@ -155,6 +160,7 @@ function push(taskie, payload, callback) {
   if (p(taskie).state.isComplete) throw new Error('Cannot push payload to taskie, taskie is in completed state.');
 
   p(taskie).queue.push({payload, callback});
+  taskie.refresh();
 }
 
 
