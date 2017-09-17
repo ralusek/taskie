@@ -18,8 +18,8 @@ class Passive {
   constructor(config) {
     config = config || {};
 
-    if (!config.handler) throw new Error('Taskie require a handler function to be provided.');
-    p(this).handler = config.handler;
+    if ((this.constructor === Passive) && !config.handler) throw new Error('Taskie require a handler function to be provided.');
+    p(this).handler = config.handler || ((payload, pushNext) => payload);
 
     p(this).queue = [];
 
@@ -146,6 +146,10 @@ class Active extends Passive {
 
   push(payload) {
     return push(this, payload);
+  }
+
+  complete(err) {
+    return complete(this, err);
   }
 }
 
