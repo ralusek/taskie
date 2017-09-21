@@ -144,8 +144,8 @@ class Active extends Passive {
     this.start();
   }
 
-  push(payload) {
-    return push(this, payload);
+  push(payload, callback) {
+    return push(this, payload, callback);
   }
 
   complete(err) {
@@ -163,8 +163,12 @@ function push(taskie, payload, callback) {
   if (p(taskie).state.isErrored) throw new Error('Cannot push payload to taskie, taskie is in an error state.');
   if (p(taskie).state.isComplete) throw new Error('Cannot push payload to taskie, taskie is in completed state.');
 
-  p(taskie).queue.push({payload, callback});
+  let deferred;
+  const promise = new Promise((resolve, reject) => deferred = {resolve, reject});
+  p(taskie).queue.push({payload, callback, deferred});
   taskie.refresh();
+
+  return promise;
 }
 
 
@@ -189,10 +193,12 @@ function resolveNext(taskie) {
   .then((response) => {
     manageProgressHandlers(taskie, response);
     current.callback && current.callback(null, response); // Don't wait for progress handlers.
+    current.deferred.resolve(response);
   })
   .catch((err) => {
     manageErrorHandlers(taskie, err);
     current.callback && current.callback(err); // Don't wait for error handlers.
+    current.deferred.reject(err);
   })
   .finally(() => taskie.refresh());
 }
