@@ -72,7 +72,8 @@ example.passive.start();
 example.passive.onProgress((results) => {
   console.log('\n\nOn Progress:', results);
   return Promise.map(results, result => updateItemInData(result.id, {tasty: true}))
-  .tap(() => console.log('\nUpdated Data:\n', sampleData));
+  .tap(() => console.log('\nUpdated Data:\n', sampleData))
+  .tap(() => new Promise((resolve) => setTimeout(() => resolve(), 5000)));
 }, {batchSize: 3});
 
 

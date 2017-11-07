@@ -1,6 +1,6 @@
 {
   "name": "taskie",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "license": "MIT",
   "main": "index.js",
   "author": {
@@ -11,6 +11,6 @@
     "url": "https://github.com/ralusek/taskie"
   },
   "dependencies": {
-    "bluebird": "^3.5.0"
+    "bluebird": "3.5.0"
   }
 }
