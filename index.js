@@ -25,10 +25,9 @@ class Passive {
 
     p(this).queue = [];
 
-    p(this).autoComplete = config.autoComplete !== false;
-
-
     p(this).concurrency = config.concurrency || 1;
+    p(this).autoComplete = config.autoComplete !== false;
+    p(this).strict = config.strict !== false;
 
     p(this).progressHandlers = [];
     p(this).errorHandlers = [];
@@ -38,7 +37,7 @@ class Passive {
 
     p(this).state = {
       isPaused: false,
-      isErrored: false,
+      errors: [],
       count: {
         resolving: 0,
         resolved: 0,
@@ -158,7 +157,7 @@ class Active extends Passive {
  * Returns a promise, as well as accepts a callback.
  */
 function push(taskie, payload, callback) {
-  if (p(taskie).state.isErrored) throw new Error('Cannot push payload to taskie, taskie is in an error state.');
+  if (p(taskie).strict && p(taskie).state.errors.length) throw new Error('Cannot push payload to taskie, taskie is in an error state.');
   if (p(taskie).state.isComplete) throw new Error('Cannot push payload to taskie, taskie is in completed state.');
 
   let deferred;
@@ -212,9 +211,15 @@ function resolveNext(taskie) {
  */
 function manageProgressHandlers(taskie, response) {
   return Promise.map(p(taskie).progressHandlers, progressHandler => {
-    return progressHandler.progress(response);
-  })
-  .catch(err => handleErrorState(taskie, err));
+    return progressHandler.progress(response)
+    // Catch and handle any error.
+    .catch(err => handleErrorState(taskie, err, {
+      type: 'progress',
+      drain: false,
+      name: progressHandler.name,
+      error: err
+    }));
+  });
 }
 
 
@@ -223,9 +228,15 @@ function manageProgressHandlers(taskie, response) {
  */
 function drainProgressHandlers(taskie) {
   return Promise.map(p(taskie).progressHandlers, progressHandler => {
-    return progressHandler.drain();
-  })
-  .catch(err => handleErrorState(taskie, err));
+    return progressHandler.drain()
+    // Catch and handle any error.
+    .catch(err => handleErrorState(taskie, err, {
+      type: 'progress',
+      drain: true,
+      name: progressHandler.name,
+      error: err
+    }));
+  });
 }
 
 
@@ -235,29 +246,29 @@ function drainProgressHandlers(taskie) {
 function manageErrorHandlers(taskie, err) {
   const errorHandlers = p(taskie).errorHandlers;
 
-  let promise;
-  if (!errorHandlers) promise = Promise.reject(err);
-  // If any error handler rejects, this whole thing will reject.
-  else promise = Promise.map(p(taskie).errorHandlers, errorHandler => {
-    return Promise.resolve(errorHandler.handler(err));
-  });
+  if (!errorHandlers.length) return Promise.resolve(handleErrorState(taskie, err, {
+    type: 'unhandledError',
+    error: err
+  }));
 
-  return promise
-  .catch(err => handleErrorState(taskie, err));
+  return Promise.map(p(taskie).errorHandlers, errorHandler => {
+    return Promise.resolve(errorHandler.handler(err))
+    // Catch and handle any error.
+    .catch(err => handleErrorState(taskie, err, {
+      type: 'error',
+      error: err
+    }));
+  });
 }
 
 
 /**
  *
  */
-function handleErrorState(taskie, err) {
-  p(taskie).state.isErrored = true;
-  p(taskie).state.error = p(taskie).state.error || err;
+function handleErrorState(taskie, error, meta) {
+  p(taskie).state.errors.push({error, meta});
 
-  p(taskie).queue.forEach(item => item.callback && item.callback(new Error('Taskie queue rejected because queue has entered error state.')));
-  p(taskie).queue = [];
-
-  complete(taskie, err);
+  if (p(taskie).strict && !p(taskie).state.isComplete) complete(taskie, {error, meta});
 }
 
 
@@ -266,6 +277,7 @@ function handleErrorState(taskie, err) {
  *
  */
 function complete(taskie, err) {
+  if (p(taskie).state.isComplete) return Promise.reject(new Error('Cannot call complete on taskie, already completed.'));
   p(taskie).state.isComplete = true;
 
   return drainProgressHandlers(taskie)
