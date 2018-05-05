@@ -61,7 +61,7 @@ function evaluateBacklog(progressHandler, {force = false} = {}) {
   } = progressHandler;
 
   const length = backlog.length;
-  if ((length >= batchSize) || force) {
+  if (length && ((length >= batchSize) || force)) {
     // Clear current backlog.
     progressHandler.backlog = [];
 
