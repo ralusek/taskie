@@ -38,10 +38,32 @@ class Passive {
     p(this).state = {
       isPaused: false,
       errors: [],
-      count: {
-        resolving: 0,
+      handling: {
+        handling: 0,
         resolved: 0,
-        errored: 0
+        errored: 0,
+        totalHandled: 0,
+        maxConcurrency: 0,
+        totalTimeHandling: 0,
+        maxTimeHandling: 0,
+        averageTimeHandling: 0
+      },
+      progressHandlers: {
+        handling: 0,
+        resolved: 0,
+        errored: 0,
+        totalHandled: 0,
+        totalTimeHandling: 0,
+        maxTimeHandling: 0,
+        averageTimeHandling: 0
+      },
+      queue: {
+        length: 0,
+        maxLength: 0,
+        totalQueuedCount: 0,
+        totalTimeQueued: 0,
+        maxTimeQueued: 0,
+        averageTimeQueued: 0
       }
     };
 
@@ -54,6 +76,17 @@ class Passive {
 
     // Init with seed.
     if (config.seed) config.seed.forEach(seed => push(this, seed));
+  }
+
+
+  /**
+   *
+   */
+  get metrics () {
+    const {totalTimeHandling: omitA, ...handling} = p(this).state.handling;
+    const {totalTimeHandling: omitB, ...progressHandlers} = p(this).state.progressHandlers;
+    const {totalTimeQueued, ...queued} = p(this).state.queue;
+    return { handling, progressHandlers, queued };
   }
 
 
@@ -92,14 +125,14 @@ class Passive {
     if (p(this).state.isComplete) return;
     // Do nothing if paused.
     if (p(this).state.isPaused) return;
-    // Do nothing if already resolving at concurrency limit.
-    if (p(this).state.count.resolving >= p(this).concurrency) return;
+    // Do nothing if already handling at concurrency limit.
+    if (p(this).state.handling.handling >= p(this).concurrency) return;
 
     
     if (!p(this).queue.length) {
       if ((this.constructor === Passive) &&
           p(this).autoComplete &&
-          !p(this).state.count.resolving) complete(this);
+          !p(this).state.handling.handling) complete(this);
       // Do nothing if there is nothing in the queue.
       return;
     }
@@ -162,7 +195,13 @@ function push(taskie, payload, callback) {
 
   let deferred;
   const promise = new Promise((resolve, reject) => deferred = {resolve, reject});
-  p(taskie).queue.push({payload, callback, deferred});
+  p(taskie).queue.push({payload, callback, deferred, queuedAt: Date.now()});
+
+  const queueState = p(taskie).state.queue;
+  queueState.totalQueuedCount++;
+  queueState.length = p(taskie).queue.length;
+  if (queueState.length > queueState.maxLength) queueState.maxLength = queueState.length;
+
   taskie.refresh();
 
   return promise;
@@ -175,8 +214,22 @@ function push(taskie, payload, callback) {
 function resolveNext(taskie) {
   const current = p(taskie).queue.shift();
 
-  p(taskie).state.count.resolving++;
+  // Update queue metrics.
+  const timeInQueue = Date.now() - current.queuedAt;
+
+  const queueState = p(taskie).state.queue;
+  const totalDequeued = queueState.totalQueuedCount - queueState.length--;
+
+  queueState.totalTimeQueued += timeInQueue;
+  if (timeInQueue > queueState.maxTimeQueued) queueState.maxTimeQueued = timeInQueue;
+  queueState.averageTimeQueued = queueState.totalTimeQueued / totalDequeued;
+
+  // Begin Handling metrics
+  const handlingState = p(taskie).state.handling;
+  if (++handlingState.handling > handlingState.maxConcurrency) handlingState.maxConcurrency = handlingState.handling;
   
+  const beginHandling = Date.now();
+
   Promise.resolve(p(taskie).handler(
     current.payload,
     // We pass in the function to push the next item. This is done here because
@@ -186,11 +239,23 @@ function resolveNext(taskie) {
     p(taskie).pushCallbacks.pushNext,
     p(taskie).pushCallbacks.completed
   ))
+  // Update Handling metrics.
+  .tap(() => updateHandlingMetricsOnComplete(handlingState, beginHandling, false))
+  .tapCatch(() => updateHandlingMetricsOnComplete(handlingState, beginHandling, true))
+
   .then((response) => {
     current.callback && current.callback(null, response); // Don't wait for progress handlers to do callback.
 
+    // Begin Progress Handler metrics.
+    const beginProgressHandling = Date.now();
+    const progressHandlingState = p(taskie).state.progressHandlers;
+    progressHandlingState.handling++;
+    
     // Wait for progress handlers to complete to call promise.
     return manageProgressHandlers(taskie, response)
+    // Update Progress Handler metrics
+    .tap(() => updateHandlingMetricsOnComplete(progressHandlingState, beginProgressHandling, false))
+    .tapCatch(() => updateHandlingMetricsOnComplete(progressHandlingState, beginProgressHandling, true))
     .then(() => current.deferred.resolve(response));
   })
   .catch((err) => {
@@ -200,7 +265,8 @@ function resolveNext(taskie) {
     .then(() => current.deferred.reject(err));
   })
   .finally(() => {
-    p(taskie).state.count.resolving--;
+    
+
     taskie.refresh();
   });
 }
@@ -282,6 +348,22 @@ function complete(taskie, err) {
 
   return drainProgressHandlers(taskie)
   .then(() => err ? p(taskie).onCompleteDeferral.reject(err) : p(taskie).onCompleteDeferral.resolve());
+}
+
+
+/**
+ *
+ */
+function updateHandlingMetricsOnComplete(state, startedAt, isError) {
+  const timeHandling = Date.now() - startedAt;
+
+  state.handling--;
+  state.totalHandled++;
+  isError ? state.errored++ : state.resolved++;
+
+  state.totalTimeHandling += timeHandling;
+  if (timeHandling > state.maxTimeHandling) state.maxTimeHandling = timeHandling;
+  state.averageTimeHandling = state.totalTimeHandling / state.totalHandled;
 }
 
 

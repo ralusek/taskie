@@ -71,6 +71,7 @@ example.passive.start();
 
 example.passive.onProgress((results) => {
   console.log('\n\nOn Progress:', results);
+  console.log(example.passive.metrics);
   return Promise.map(results, result => updateItemInData(result.id, {tasty: true}))
   .tap(() => console.log('\nUpdated Data:\n', sampleData))
   .tap(() => new Promise((resolve) => setTimeout(() => resolve(), 2000)));
@@ -79,4 +80,5 @@ example.passive.onProgress((results) => {
 
 example.passive.onComplete()
 .then(() => console.log('I completed.'))
-.catch(err => console.log('I errored', err));
+.catch(err => console.log('I errored', err))
+.then(() => console.log('Final', example.passive.metrics));
