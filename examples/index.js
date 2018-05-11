@@ -1,7 +1,7 @@
 'use strict';
 
 const Promise = require('bluebird');
-const Taskie = require('../');
+const Taskie = require('../src/index.js');
 
 
 const sampleData = [
