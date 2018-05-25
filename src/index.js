@@ -126,7 +126,8 @@ class Passive {
     // Do nothing if paused.
     if (p(this).state.isPaused) return;
     // Do nothing if already handling at concurrency limit.
-    if (p(this).state.handling.handling >= p(this).concurrency) return;
+    const totalHandling = p(this).state.handling.handling + p(this).state.progressHandlers.handling;
+    if (totalHandling >= p(this).concurrency) return;
 
     
     if (!p(this).queue.length) {
