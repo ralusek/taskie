@@ -36,6 +36,7 @@ class Passive {
     p(this).onCompletePromise = new Promise((resolve, reject) => p(this).onCompleteDeferral = {resolve, reject});
 
     p(this).state = {
+      startedAt: null,
       isPaused: false,
       errors: [],
       handling: {
@@ -43,6 +44,7 @@ class Passive {
         resolved: 0,
         errored: 0,
         totalHandled: 0,
+        handledPerSecond: 0,
         maxConcurrency: 0,
         totalTimeHandling: 0,
         maxTimeHandling: 0,
@@ -53,6 +55,7 @@ class Passive {
         resolved: 0,
         errored: 0,
         totalHandled: 0,
+        handledPerSecond: 0,
         totalTimeHandling: 0,
         maxTimeHandling: 0,
         averageTimeHandling: 0
@@ -157,6 +160,8 @@ class Passive {
    *
    */
   start() {
+    if (p(this).state.startedAt) return;
+    p(this).state.startedAt = Date.now();
     p(this).state.isPaused = false;
     this.refresh();
   }
@@ -241,8 +246,8 @@ function resolveNext(taskie) {
     p(taskie).pushCallbacks.completed
   ))
   // Update Handling metrics.
-  .tap(() => updateHandlingMetricsOnComplete(handlingState, beginHandling, false))
-  .tapCatch(() => updateHandlingMetricsOnComplete(handlingState, beginHandling, true))
+  .tap(() => updateHandlingMetricsOnComplete(taskie, 'handling', beginHandling, false))
+  .tapCatch(() => updateHandlingMetricsOnComplete(taskie, 'handling', beginHandling, true))
 
   .then((response) => {
     current.callback && current.callback(null, response); // Don't wait for progress handlers to do callback.
@@ -255,8 +260,8 @@ function resolveNext(taskie) {
     // Wait for progress handlers to complete to call promise.
     return manageProgressHandlers(taskie, response)
     // Update Progress Handler metrics
-    .tap(() => updateHandlingMetricsOnComplete(progressHandlingState, beginProgressHandling, false))
-    .tapCatch(() => updateHandlingMetricsOnComplete(progressHandlingState, beginProgressHandling, true))
+    .tap(() => updateHandlingMetricsOnComplete(taskie, 'progressHandlers', beginProgressHandling, false))
+    .tapCatch(() => updateHandlingMetricsOnComplete(taskie, 'progressHandlers', beginProgressHandling, true))
     .then(() => current.deferred.resolve(response));
   })
   .catch((err) => {
@@ -355,15 +360,21 @@ function complete(taskie, err) {
 /**
  *
  */
-function updateHandlingMetricsOnComplete(state, startedAt, isError) {
-  const timeHandling = Date.now() - startedAt;
+function updateHandlingMetricsOnComplete(taskie, stateKey, itemStartedAt, isError) {
+  const now = Date.now();
+  const state = p(taskie).state[stateKey];
+
+  const totalRuntime = now - p(taskie).state.startedAt;
+
+  const timeHandlingItem = now - itemStartedAt;
 
   state.handling--;
   state.totalHandled++;
   isError ? state.errored++ : state.resolved++;
+  state.handledPerSecond = state.totalHandled / (totalRuntime / 1000);
 
-  state.totalTimeHandling += timeHandling;
-  if (timeHandling > state.maxTimeHandling) state.maxTimeHandling = timeHandling;
+  state.totalTimeHandling += timeHandlingItem;
+  if (timeHandlingItem > state.maxTimeHandling) state.maxTimeHandling = timeHandlingItem;
   state.averageTimeHandling = state.totalTimeHandling / state.totalHandled;
 }
 
