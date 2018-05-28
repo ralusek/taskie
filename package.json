@@ -1,6 +1,6 @@
 {
   "name": "taskie",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Streamlike queueing system.",
   "license": "MIT",
   "main": "lib/index.js",
