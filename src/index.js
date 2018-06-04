@@ -29,6 +29,8 @@ class Passive {
     p(this).autoComplete = config.autoComplete !== false;
     p(this).strict = config.strict !== false;
 
+    p(this).onceEveryHandlers = [];
+    p(this).onceEveryProgressedHandlers = [];
     p(this).progressHandlers = [];
     p(this).errorHandlers = [];
 
@@ -73,7 +75,7 @@ class Passive {
 
     p(this).pushCallbacks = Object.freeze({
       pushNext: (nextPayload) => push(this, nextPayload),
-      completed: (err) => complete(this, err)
+      complete: (options) => complete(this, options)
     });
 
 
@@ -94,7 +96,27 @@ class Passive {
 
 
   /**
-   * 
+   * Registers a one time callback to be called on the next item to be handled.
+   * Handler is NOT awaited to progress the queue (see onProgress).
+   */
+  onceEvery(handler) {
+    p(this).onceEveryHandlers.push(handler);
+  }
+
+
+  /**
+   *
+   */
+  onceEveryProgressed(handler) {
+    p(this).onceEveryProgressedHandlers.push(handler);
+  }
+
+
+  /**
+   * Registers an asynchronous handler that is either called every queue item,
+   * or every batchSize if provided in config. Progress handlers hold up the
+   * advancement of the queue while being resolved, so as to be used as the
+   * mechanism for adding backpressure to the progression of a job.
    */
   onProgress(handler, config) {
     config = config || {};
@@ -127,10 +149,10 @@ class Passive {
   refresh() {
     // Throw error if terminated.
     if (p(this).state.isTerminated) throw new Error('Cannot refresh Taskie, is terminated.');
-    // Do nothing if complete.
-    if (p(this).state.isComplete) return;
     // Do nothing if paused.
     if (p(this).state.isPaused) return;
+    // Do nothing if completed but not actively draining queue.
+    if (p(this).state.isComplete && !p(this).state.isDrainingQueue) return;
     // Do nothing if already handling at concurrency limit.
     const totalHandling = p(this).state.handling.handling + p(this).state.progressHandlers.handling;
     if (totalHandling >= p(this).concurrency) return;
@@ -138,6 +160,7 @@ class Passive {
     
     if (!p(this).queue.length) {
       if ((this.constructor === Passive) &&
+          !p(this).state.isComplete &&
           p(this).autoComplete &&
           !p(this).state.handling.handling) complete(this);
       // Do nothing if there is nothing in the queue.
@@ -194,8 +217,8 @@ class Active extends Passive {
     return push(this, payload, callback);
   }
 
-  complete(err) {
-    return complete(this, err);
+  complete(options) {
+    return complete(this, options);
   }
 }
 
@@ -256,7 +279,7 @@ function resolveNext(taskie) {
     // only way to push into the taskie's queue is therefore through this
     // callback on the handler.
     p(taskie).pushCallbacks.pushNext,
-    p(taskie).pushCallbacks.completed
+    p(taskie).pushCallbacks.complete
   ))
   // Update Handling metrics.
   .tap(() => updateHandlingMetricsOnComplete(taskie, 'handling', beginHandling, false))
@@ -266,6 +289,7 @@ function resolveNext(taskie) {
     // Stop execution if terminated.
     if (p(taskie).state.isTerminated) return;
     current.callback && current.callback(null, response); // Don't wait for progress handlers to do callback.
+    manageOnceEveryHandlers(taskie, response); // Don't wait for progress handlers to manage onceEvery handlers.
 
     // Stop execution if terminated (could have been terminated within callback).
     if (p(taskie).state.isTerminated) return;
@@ -279,7 +303,10 @@ function resolveNext(taskie) {
     // Update Progress Handler metrics
     .tap(() => updateHandlingMetricsOnComplete(taskie, 'progressHandlers', beginProgressHandling, false))
     .tapCatch(() => updateHandlingMetricsOnComplete(taskie, 'progressHandlers', beginProgressHandling, true))
-    .then(() => current.deferred.resolve(response));
+    .then(() => {
+      manageOnceEveryProgressedHandlers(taskie, response); // Don't wait for handlers.
+      return current.deferred.resolve(response);
+    });
   })
   .catch((err) => {
     current.callback && current.callback(err); // Don't wait for error handlers to do callback.
@@ -288,6 +315,27 @@ function resolveNext(taskie) {
     .then(() => current.deferred.reject(err));
   })
   .finally(() => (!p(taskie).state.isTerminated) && taskie.refresh());
+}
+
+
+/**
+ *
+ */
+function manageOnceEveryHandlers(taskie, response) {
+  const handlers = p(taskie).onceEveryHandlers;
+  p(taskie).onceEveryHandlers = [];
+
+  handlers.forEach(handler => handler(response));
+}
+
+/**
+ *
+ */
+function manageOnceEveryProgressedHandlers(taskie, response) {
+  const handlers = p(taskie).onceEveryProgressedHandlers;
+  p(taskie).onceEveryProgressedHandlers = [];
+
+  handlers.forEach(handler => handler(response));
 }
 
 
@@ -321,6 +369,34 @@ function drainProgressHandlers(taskie) {
       name: progressHandler.name,
       error: err
     }));
+  })
+  .then(() => {
+    return new Promise((resolve, reject) => {
+      testForCompletion();
+      function testForCompletion() {
+        if (!p(taskie).state.progressHandlers.handling) return resolve();
+        taskie.onceEveryProgressed(() => testForCompletion());
+      }
+    });
+  });
+}
+
+
+/**
+ *
+ */
+function drainQueue(taskie) {
+  p(taskie).state.isDrainingQueue = true;
+
+  return new Promise((resolve, reject) => {
+    // Start in case it has been paused.
+    taskie.start();
+
+    testForCompletion();
+    function testForCompletion() {
+      if (!(p(taskie).queue.length || p(taskie).state.handling.handling)) return resolve();
+      taskie.onceEvery(() => testForCompletion());
+    }
   });
 }
 
@@ -361,11 +437,12 @@ function handleErrorState(taskie, error, meta) {
 /**
  *
  */
-function complete(taskie, err) {
+function complete(taskie, {willDrainQueue = true, willDrainProgressHandlers = true} = {}, err) {
   if (p(taskie).state.isComplete) return Promise.reject(new Error('Cannot call complete on taskie, already completed.'));
   p(taskie).state.isComplete = true;
 
-  return drainProgressHandlers(taskie)
+  return Promise.resolve(willDrainQueue && drainQueue(taskie))
+  .then(() => willDrainProgressHandlers && drainProgressHandlers(taskie))
   .then(() => err ? p(taskie).onCompleteDeferral.reject(err) : p(taskie).onCompleteDeferral.resolve());
 }
 

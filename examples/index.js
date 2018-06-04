@@ -57,9 +57,10 @@ function updateItemInData(id, update) {
 const example = {};
 
 example.passive = new Taskie.Passive({
-  handler: (currentId, pushNext) => {
+  handler: (currentId, pushNext, complete) => {
     const nextId = currentId + 3;
     if (indexed[nextId]) pushNext(nextId);
+    if (nextId === 15) console.log('Completing early.', complete());
     return fetchItemFromData(currentId);
   },
   seed: [1, 2, 3],
@@ -80,5 +81,6 @@ example.passive.onProgress((results) => {
 
 example.passive.onComplete()
 .then(() => console.log('I completed.'))
+.tap(() => console.log('\nFinal Data:\n', sampleData))
 .catch(err => console.log('I errored', err))
-.then(() => console.log('Final', example.passive.metrics));
+.then(() => console.log('Final Metrics', example.passive.metrics));
