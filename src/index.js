@@ -125,6 +125,9 @@ class Passive {
    *
    */
   refresh() {
+    // Throw error if terminated.
+    if (p(this).state.isTerminated) throw new Error('Cannot refresh Taskie, is terminated.');
+    // Do nothing if complete.
     if (p(this).state.isComplete) return;
     // Do nothing if paused.
     if (p(this).state.isPaused) return;
@@ -165,6 +168,15 @@ class Passive {
     p(this).state.isPaused = false;
     this.refresh();
   }
+
+
+  /**
+   *
+   */
+  terminate() {
+    if (p(this).state.isTerminated) throw new Error('Cannot call terminate on taskie, already terminated.');
+    p(this).state.isTerminated = true;
+  }
 }
 
 
@@ -196,6 +208,7 @@ class Active extends Passive {
  * Returns a promise, as well as accepts a callback.
  */
 function push(taskie, payload, callback) {
+  if (p(taskie).state.isTerminated) throw new Error('Cannot push payload to taskie, taskie is terminated.');
   if (p(taskie).strict && p(taskie).state.errors.length) throw new Error('Cannot push payload to taskie, taskie is in an error state.');
   if (p(taskie).state.isComplete) throw new Error('Cannot push payload to taskie, taskie is in completed state.');
 
@@ -250,8 +263,12 @@ function resolveNext(taskie) {
   .tapCatch(() => updateHandlingMetricsOnComplete(taskie, 'handling', beginHandling, true))
 
   .then((response) => {
+    // Stop execution if terminated.
+    if (p(taskie).state.isTerminated) return;
     current.callback && current.callback(null, response); // Don't wait for progress handlers to do callback.
 
+    // Stop execution if terminated (could have been terminated within callback).
+    if (p(taskie).state.isTerminated) return;
     // Begin Progress Handler metrics.
     const beginProgressHandling = Date.now();
     const progressHandlingState = p(taskie).state.progressHandlers;
@@ -270,11 +287,7 @@ function resolveNext(taskie) {
     return manageErrorHandlers(taskie, err)
     .then(() => current.deferred.reject(err));
   })
-  .finally(() => {
-    
-
-    taskie.refresh();
-  });
+  .finally(() => (!p(taskie).state.isTerminated) && taskie.refresh());
 }
 
 
@@ -355,6 +368,7 @@ function complete(taskie, err) {
   return drainProgressHandlers(taskie)
   .then(() => err ? p(taskie).onCompleteDeferral.reject(err) : p(taskie).onCompleteDeferral.resolve());
 }
+
 
 
 /**
